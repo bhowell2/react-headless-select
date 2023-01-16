@@ -1,8 +1,79 @@
-/*
- * Do not want to export these externally, but want to be able to export all the
- * exported functions/types in the useSelect file, so separated out here.
+import {
+  GroupSelectOption,
+  isGroupSelectOption,
+  OptionType,
+  SelectOption
+} from '../hooks/useSelect'
+
+/**
+ * Used to determine if two options are the same. This is used in some
+ * reconciliation-type processes (e.g., finding last highlight index in
+ * a new array of options).
+ */
+export type OptionEqualityCheck<T, G = T> = (
+  a: OptionType<T, G>,
+  b: OptionType<T, G>
+) => boolean
+export const defaultOptionEqualityCheck: OptionEqualityCheck<any> = (a, b) =>
+  a.value === b.value
+
+/** Passed the current input value and filters the available options as desired. */
+export type OptionsFilterFn<T, G = T> = (
+  val: string,
+  options: OptionType<T, G>[]
+) => OptionType<T, G>[]
+
+/**
+ * Basic matching function that uses indexOf to match the label or groupLabel.
+ * If the groupLabel matches then all GroupSelectionOption#options will be returned,
+ * otherwise each group's options will be checked and if any match then the
+ * GroupSelectOption will be returned with only the matching options.
  * */
-import { GroupSelectOption, isGroupSelectOption, OptionType } from './useSelect'
+export function indexOfFilterMatch<T, O extends OptionType<T> | SelectOption<T>>(
+  val: string,
+  options: O[]
+): O[] {
+  if (val === '') {
+    return options
+  }
+  const result: O[] = []
+  for (let i = 0; i < options.length; i++) {
+    const option = options[i]
+    if (isGroupSelectOption(option)) {
+      if (option.groupLabel.indexOf(val) >= 0) {
+        result.push(option)
+      } else {
+        // currently, this will only return SelectOptions since the group's options
+        const groupFilteredOptions = indexOfFilterMatch(val, option.options)
+        if (groupFilteredOptions.length > 0) {
+          result.push({
+            groupLabel: option.groupLabel,
+            options: groupFilteredOptions
+          } as O)
+        }
+      }
+    } else if (option.label.indexOf(val) >= 0) {
+      result.push(option)
+    }
+  }
+  return result
+}
+
+export function textMatchesSelectedOptions(
+  text: string,
+  selectedOptions: OptionType<unknown>[]
+): boolean {
+  for (let i = 0; i < selectedOptions.length; i++) {
+    const option = selectedOptions[i]
+    if (
+      (isGroupSelectOption(option) && text === option.groupLabel) ||
+      (!isGroupSelectOption(option) && text === option.label)
+    ) {
+      return true
+    }
+  }
+  return false
+}
 
 /**
  * Calculates the selectable option length, respecting the canSelectGroup option
@@ -92,12 +163,13 @@ export function getOptionAtIndex<T, G = T>(
 export function getOptionIndex<T, G = T>(
   options: OptionType<T, G>[],
   optionToFind: OptionType<T, G>,
-  canSelectGroup = false
+  canSelectGroup = false,
+  equalityCheck: OptionEqualityCheck<T, G> = defaultOptionEqualityCheck
 ): number {
   let pos = 0
   function handleGroupOptions(groupOption: GroupSelectOption<T, G>): number {
     if (canSelectGroup) {
-      if (optionToFind === groupOption) {
+      if (equalityCheck(optionToFind, groupOption)) {
         return pos
       }
       pos++
@@ -108,7 +180,7 @@ export function getOptionIndex<T, G = T>(
         const res = handleGroupOptions(opt)
         if (res >= 0) return res
       } else {
-        if (optionToFind === opt) return pos
+        if (equalityCheck(optionToFind, opt)) return pos
         pos++
       }
     }
@@ -120,9 +192,23 @@ export function getOptionIndex<T, G = T>(
       const res = handleGroupOptions(opt)
       if (res >= 0) return res
     } else {
-      if (optionToFind === opt) return pos
+      if (equalityCheck(optionToFind, opt)) return pos
       pos++
     }
   }
   return -1
 }
+
+export type OptionSelectedCheck<T, G = T> = (
+  option: OptionType<T, G>,
+  selectedOptions: OptionType<T, G>[],
+  equalityCheck?: OptionEqualityCheck<T, G>
+) => boolean
+
+export const defaultIsOptionSelectedCheck: OptionSelectedCheck<any> = (
+  option,
+  currentlySelectedOptions,
+  equalityCheck = defaultOptionEqualityCheck
+) =>
+  currentlySelectedOptions?.find((selected) => equalityCheck(option, selected)) !==
+  undefined

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/naming-convention */
 export const __DEV__ = process.env.NODE_ENV !== 'production'
 
 export function runIfDev(fn: () => void) {

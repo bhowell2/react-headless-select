@@ -1,4 +1,4 @@
-// modeled after: https://gist.github.com/Trindaz/7f3cff734ca247609a7b
+// modeled after: https://gist.github.com/Trindaz/7f3cff734ca247609a7b (had an error)
 export function hashObject(toHash: any): string {
   const encountered: any[] = []
   function check(obj: any): any {
