@@ -4,8 +4,8 @@ import {
   testOptions,
   totalSelectableOptionsNoGroupSelectLength,
   totalSelectableOptionsWithGroupSelectLength
-} from './testData'
-import { getOptionAtIndex, getOptionsLength } from '../../src/ts/hooks/useSelectUtils'
+} from '../hooks/testData'
+import { getOptionAtIndex, getOptionsLength } from '../../src/ts/utils/optionUtils'
 
 describe('getOptionsAtIndex', () => {
   test('returns option at index - no group selection', () => {
@@ -54,8 +54,9 @@ describe('getOptionsAtIndex', () => {
       label: '0.0.0.0',
       value: '0.0.0.0'
     })
+    const makeAny = (obj: any): any => obj
     expect(getOptionAtIndex(nestedGroupedOptions, 2, true)).toEqual(
-      nestedGroupedOptions[0]!.options![0].options![0]
+      makeAny(nestedGroupedOptions)[0]!.options![0].options![0]
     )
     expect(getOptionAtIndex(nestedGroupedOptions, 5, true)).toEqual(
       nestedGroupedOptions[1]
@@ -64,10 +65,10 @@ describe('getOptionsAtIndex', () => {
       nestedGroupedOptions[2]
     )
     expect(getOptionAtIndex(nestedGroupedOptions, 7, true)).toEqual(
-      nestedGroupedOptions[2].options![0]
+      makeAny(nestedGroupedOptions[2]).options![0]
     )
     expect(getOptionAtIndex(nestedGroupedOptions, 8, true)).toEqual(
-      nestedGroupedOptions[2].options![0].options![0]
+      makeAny(nestedGroupedOptions)[2].options![0].options![0]
     )
     expect(getOptionAtIndex(nestedGroupedOptions, 9, true)).toEqual(null)
   })

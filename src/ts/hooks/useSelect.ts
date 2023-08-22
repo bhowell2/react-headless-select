@@ -7,13 +7,18 @@ import {
   MutableRefObject,
   useEffect,
   useMemo,
-  useRef
+  useRef,
+  useState
 } from 'react'
 import { useLatestRef } from './internal/useLatestRef'
-import { getElement, useScrollIntoView } from './useScrollIntoView'
+import {
+  getElement,
+  ScrollOptionsType,
+  ScrollType,
+  useScrollIntoView
+} from './useScrollIntoView'
 import { NOOP } from '../utils/noop'
-import { Either } from '../types/typeUtils'
-import { useSelectReducer, UseSelectReducerOptionsBase } from './selectReducer'
+import { useSelectReducer, UseSelectReducerOptions } from './selectReducer'
 import {
   Action,
   makeAppendOptionsAction,
@@ -34,102 +39,15 @@ import {
   defaultIsOptionSelectedCheck,
   defaultOptionEqualityCheck,
   getOptionAtIndex,
-  indexOfFilterMatch
+  indexOfFilterMatch,
+  isGroupSelectOption
 } from '../utils/optionUtils'
 import { usePreviousVal } from './internal/usePreviousRef'
+import { useSafeLayoutEffect } from './internal/useSafeLayoutEffect'
+import { wrapFunction } from '../utils/wrapFunction'
+import { ExtObj, GroupSelectOption, OptionType } from '../types/optionTypes'
 
-export interface SelectOption<T> {
-  label: string
-  value: T
-  /**
-   * This or the UseSelectOptions#canSelect function can be used
-   * to disable selection of an option. Note if this is provided
-   * it will override the canSelect function.
-   *
-   * @default false (i.e., this option can be selected)
-   */
-  disableSelection?: boolean
-}
-
-export interface GroupSelectOption<T, G = T> {
-  groupLabel: string
-  /**
-   * Options can be a combination of SelectOptions and GroupSelectOptions
-   * (allowing for nested grouping).
-   * */
-  options: OptionType<T, G>[]
-  value: G
-  /**
-   * This or the UseSelectOptions#canSelect function can be used
-   * to disable selection of an option. Note if this is provided
-   * it will override the canSelect function.
-   *
-   * @default false (i.e., this option can be selected)
-   */
-  disableSelection?: boolean
-}
-
-export type OptionType<T, G = T> = Either<SelectOption<T>, GroupSelectOption<T, G>>
-
-export function isGroupSelectOption<T, G = T>(
-  option: OptionType<T, G>
-): option is GroupSelectOption<T, G> {
-  return 'groupLabel' in option
-}
-
-function getHighlightCompletionPercentage(
-  options: unknown[],
-  highlightIndex: number
-): number {
-  if (options.length === 0 || highlightIndex === options.length - 1) return 1
-  if (highlightIndex <= 0) return 0
-  return highlightIndex / options.length
-}
-
-export interface UseSelectOptionsBase<T, G = T>
-  extends UseSelectReducerOptionsBase<T, G> {
-  /**
-   * This does not need to be memoized, it is captured. The current state
-   * will be passed to this, along with the current scroll percentage and
-   * the scroll event.
-   */
-  onScroll?: (
-    selectState: SelectState<T, G>,
-    scrollPercentage: number,
-    event: HTMLElementEventMap['scroll']
-  ) => void
-  /**
-   * Search occurs when the enter key is pressed and no item has
-   * been selected with the arrow keys (i.e., highlightIndex = -1).
-   *
-   * The current internal input value will be passed back. A 'search'
-   * function is also passed back in UseSelectResult so that a search
-   * can be triggered, where this function will be called as well.
-   */
-  onSearch?: (search: string) => void
-  /**
-   * Allows for overriding the default scroll into view options.
-   * @default { behavior: 'auto', block: 'center' }
-   */
-  scrollIntoViewOptions?: ScrollIntoViewOptions
-  /**
-   * If showMenu should be true when the input is initially focused.
-   * @default false (i.e., do not automatically show on focus)
-   */
-  showMenuOnFocus?: boolean
-  /**
-   * If value is provided and differs from the internal value (which
-   * simply mirrors the text input value) the internal value will be
-   * updated to reflect this value.
-   */
-  value?: string
-}
-
-// export interface UseSelectOptionsWithoutGroupSelect
-
-export type UseSelectOptions<T, G = T> = UseSelectOptionsBase<T, G>
-
-export interface OptionProps<T, G = T> {
+export interface OptionProps<T, G = T, O extends ExtObj = ExtObj> {
   /**
    * Provides the group-nested depth of the option.
    * Options that are not grouped will have a depth of 0 and
@@ -142,6 +60,8 @@ export interface OptionProps<T, G = T> {
    * also a GroupOption then their options will have a depth of 2.
    */
   depth: number
+  /** Set by isDisabled if provided. */
+  isDisabled: boolean
   /**
    * When the keyboard is used to navigate the dropdown this specifies if
    * the highlight index is for the given item. This wraps the 'canSelectGroup'
@@ -162,7 +82,7 @@ export interface OptionProps<T, G = T> {
    * */
   onSelect: (closeMenu?: boolean) => void
   /** The Group/SelectOption for this element. */
-  option: OptionType<T, G>
+  option: OptionType<T, G, O>
   /** Props to be spread into each option. This includes spread to group options as well. */
   spreadProps: {
     /** Simply the option's label. Provided for accessibility. */
@@ -177,21 +97,78 @@ export interface OptionProps<T, G = T> {
    * This prop can be checked to determine if the current option prop is for a
    * GroupSelectOption - containing the correct OptionProps for the group's options.
    * */
-  groupOptions?: OptionProps<T, G>[]
+  groupOptions?: OptionProps<T, G, O>[]
 }
 
-export interface UseSelectResult<T, G = T, E extends HTMLElement = HTMLInputElement> {
+function getHighlightCompletionPercentage(
+  options: unknown[],
+  highlightIndex: number
+): number {
+  if (options.length === 0 || highlightIndex === options.length - 1) return 1
+  if (highlightIndex <= 0) return 0
+  return highlightIndex / options.length
+}
+
+export interface UseSelectOptions<
+  T,
+  G = T,
+  O extends ExtObj = ExtObj,
+  ST extends ScrollType = 'scrollInto'
+> extends UseSelectReducerOptions<T, G, O> {
+  /**
+   * This does not need to be memoized, it is captured. The current state
+   * will be passed to this, along with the current scroll percentage and
+   * the scroll event.
+   */
+  onScroll?: (
+    selectState: SelectState<T, G, O>,
+    scrollPercentage: number,
+    event: HTMLElementEventMap['scroll']
+  ) => void
+  /**
+   * Search occurs when the enter key is pressed and no item has
+   * been selected with the arrow keys (i.e., highlightIndex = -1).
+   *
+   * The current internal input value will be passed back. A 'search'
+   * function is also passed back in UseSelectResult so that a search
+   * can be triggered, where this function will be called as well.
+   */
+  onSearch?: (search: string) => void
+  onSelect?: (option: OptionType<T, G, O>) => void
+  scrollOptions?: {
+    type: ST
+    options?: ScrollOptionsType<ST>
+  }
+  /**
+   * If showMenu should be true when the input is initially focused.
+   * @default false (i.e., do not automatically show on focus)
+   */
+  showMenuOnFocus?: boolean
+  /**
+   * If value is provided and differs from the internal value (which
+   * simply mirrors the text input value) the internal value will be
+   * updated to reflect this value.
+   */
+  value?: string
+}
+
+export interface UseSelectResult<
+  T,
+  G = T,
+  O extends ExtObj = ExtObj,
+  E extends HTMLElement = HTMLInputElement
+> {
   dispatchAction: Dispatch<Action<SelectAction, object>>
-  dispatchAppendOptions: (options: OptionType<T, G>[]) => void
+  dispatchAppendOptions: (options: OptionType<T, G, O>[]) => void
   /**
    * Allows to manually update the state.
    */
-  dispatchStateChange: Dispatch<SetStateAction<T, G>['payload']['setState']>
+  dispatchStateChange: Dispatch<SetStateAction<T, G, O>['payload']['setState']>
   /**
    * Provides the list of options to display. This is after filtering
    * and determining if it is highlighted or selected.
    */
-  displayOptions: OptionProps<T, G>[]
+  displayOptions: OptionProps<T, G, O>[]
   dropdownContainerProps: {
     onMouseEnter: () => void
     onMouseLeave: () => void
@@ -227,13 +204,16 @@ export interface UseSelectResult<T, G = T, E extends HTMLElement = HTMLInputElem
    * If item(s) are selected then they will be returned here. The most recently
    * selected item is also passed to onSelect if it is provided.
    */
-  selectedOptions: OptionType<T, G>[]
-  state: SelectState<T, G>
+  selectedOptions: OptionType<T, G, O>[]
+  state: SelectState<T, G, O>
 }
 
-export function getDefaultOptions<T, G = T>(
-  options: UseSelectOptions<T, G>
-): UseSelectOptions<T, G> {
+export function getDefaultOptions<
+  T,
+  G = T,
+  O extends ExtObj = ExtObj,
+  ST extends ScrollType = 'scrollInto'
+>(options: UseSelectOptions<T, G, O, ST>): UseSelectOptions<T, G, O, ST> {
   return {
     allowNoHighlight: false,
     closeMenuOnSelection: !options.multiSelect,
@@ -250,31 +230,49 @@ export function getDefaultOptions<T, G = T>(
 export function useSelect<
   T,
   G = T,
-  E extends HTMLInputElement | HTMLTextAreaElement = HTMLInputElement
->(useSelectOptionsArg: UseSelectOptionsBase<T, G>): UseSelectResult<T, G, E> {
-  const useSelectOptions = getDefaultOptions(useSelectOptionsArg)
+  O extends ExtObj = ExtObj,
+  E extends HTMLInputElement | HTMLTextAreaElement = HTMLInputElement,
+  ST extends ScrollType = 'scrollInto'
+>(options: UseSelectOptions<T, G, O, ST>): UseSelectResult<T, G, O, E> {
+  const useSelectOptions = getDefaultOptions(options)
   const {
     canSelectGroup,
+    isDisabled,
     isSelectedCheck,
     multiSelect,
     onScroll,
     onSearch,
     optionEqualityCheck,
-    scrollIntoViewOptions,
+    scrollOptions,
     showMenuOnFocus,
     value
   } = useSelectOptions
-  // const { completelyRemoveSelectOnBackspace = true } = inputOptions
+
   const inputRef = useRef<E>()
-  const [selectState, dispatch] = useSelectReducer<T, G>(useSelectOptions)
+  const isMouseInsideDropdown = useRef(false)
+  /*
+   * There's an edge case here where if a
+   * */
+  useSelectOptions.onStateChange = wrapFunction(
+    useSelectOptions.onStateChange,
+    (prevState, nextState) => {
+      if (
+        prevState.inputState.showMenu &&
+        !nextState.inputState.showMenu &&
+        isMouseInsideDropdown.current
+      ) {
+        isMouseInsideDropdown.current = false
+      }
+      return nextState
+    }
+  )
+
+  const { dispatch, selectState } = useSelectReducer<T, G, O>(useSelectOptions)
   useEffect(() => {
     if (value !== undefined && selectState.inputState.value !== value) {
-      console.log(
-        'updating value?? val="%s", stateVal="%s"',
-        value,
-        selectState.inputState.value
+      dispatch(
+        makeInputChangeAction({ showMenu: selectState.inputState.isInputFocused, value })
       )
-      dispatch(makeInputChangeAction(value))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value])
@@ -350,7 +348,6 @@ export function useSelect<
       case 'Escape':
         event.preventDefault()
         dispatch(makeSetMenuOpenAction(false))
-        // setInputRelatedState((cur) => ({ ...cur, showMenu: false }))
         break
       default:
     }
@@ -359,24 +356,27 @@ export function useSelect<
   // may have to change this to a set state to trigger re-render if user does not
   // set on initialization and doesn't rerender at this same level (maybe they pass
   // the ref down to another component that rerenders)
-  const dropdownContainerRef = useRef<HTMLElement>(null)
-  // const [dropdownContainer, setDropdownContainer] = useState<HTMLElement | undefined>()
+  // const dropdownContainerRef = useRef<HTMLElement>(null)
+  const [dropdownContainer, setDropdownContainer] = useState<HTMLElement | undefined>()
   const highlightRef = useRef<HTMLElement>(null)
   const selectedRef = useRef<HTMLElement>(null)
   const prevState = usePreviousVal(selectState, true)
-  const prevDropdownContainer = usePreviousVal(dropdownContainerRef.current)
-  useScrollIntoView(
-    dropdownContainerRef,
-    highlightIndex === -1 ? selectedRef : highlightRef,
-    scrollIntoViewOptions,
-    selectState.highlightIndex !== prevState?.highlightIndex ||
+  const prevDropdownContainer = usePreviousVal(dropdownContainer)
+  useScrollIntoView({
+    child: highlightIndex === -1 ? selectedRef : highlightRef,
+    container: dropdownContainer,
+    disabled: !(
+      selectState.highlightIndex !== prevState?.highlightIndex ||
       selectState.inputState.showMenu !== prevState?.inputState.showMenu ||
-      dropdownContainerRef.current !== prevDropdownContainer
-  )
+      dropdownContainer !== prevDropdownContainer
+    ),
+    options: scrollOptions?.options,
+    type: scrollOptions?.type
+  })
   const onScrollRef = useLatestRef(onScroll)
   const stateRef = useLatestRef(selectState)
   useEffect(() => {
-    const container = getElement(dropdownContainerRef)
+    const container = getElement(dropdownContainer)
     if (container) {
       const scroll = (event: HTMLElementEventMap['scroll']) => {
         // calculate percentage scrolled
@@ -392,9 +392,14 @@ export function useSelect<
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dropdownContainerRef.current])
+  }, [dropdownContainer])
 
-  const isMouseInsideDropdown = useRef(false)
+  // useEffect(() => {
+  //   if (!selectState.inputState.showMenu && isMouseInsideDropdown.current) {
+  //     // reset this. there are cases where the menu will be
+  //     isMouseInsideDropdown.current = false
+  //   }
+  // }, [selectState.inputState.showMenu])
 
   useEffect(() => {
     const input = inputRef.current
@@ -428,24 +433,26 @@ export function useSelect<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showMenuOnFocus, inputRef.current])
 
-  const displayOptions = useMemo<OptionProps<T, G>[]>(() => {
-    const selectedCheck = (option: OptionType<T, G>) => {
-      if (isSelectedCheck)
-        return isSelectedCheck(option, selectedOptions, optionEqualityCheck)
+  const selectedCheckRef = useLatestRef(isSelectedCheck)
+  const displayOptions = useMemo<OptionProps<T, G, O>[]>(() => {
+    const selectedCheck = (option: OptionType<T, G, O>) => {
+      if (selectedCheckRef.current)
+        return selectedCheckRef.current(option, selectedOptions, optionEqualityCheck)
       return selectedOptions.includes(option)
     }
-    const returnedDisplayOptions: OptionProps<T, G>[] = []
+    const returnedDisplayOptions: OptionProps<T, G, O>[] = []
     let pos = 0
 
     const checkGroupOptions = (
-      groupOption: GroupSelectOption<T, G>,
-      groupAry: OptionProps<T, G>[],
+      groupOption: GroupSelectOption<T, G, O>,
+      groupAry: OptionProps<T, G, O>[],
       depth = 0
     ) => {
       const isGroupHighlighted = canSelectGroup ? highlightIndex === pos++ : false
       const isGroupSelected = canSelectGroup ? selectedCheck(groupOption) : false
       groupAry.push({
         depth,
+        isDisabled: isDisabled ? isDisabled(groupOption, selectState) : false,
         isHighlighted: isGroupHighlighted,
         isSelected: isGroupSelected,
         onDeselect: (closeMenu) =>
@@ -461,7 +468,7 @@ export function useSelect<
           ref: isGroupHighlighted ? highlightRef : undefined
         }
       })
-      const groupsOptionProps: OptionProps<any>[] = []
+      const groupsOptionProps: OptionProps<any, any, any>[] = []
       const gOptions = groupOption.options
       for (let i = 0; i < gOptions.length; i++) {
         const opt = gOptions[i]
@@ -470,6 +477,7 @@ export function useSelect<
         } else {
           groupsOptionProps.push({
             depth: depth + 1,
+            isDisabled: isDisabled ? isDisabled(opt, selectState) : false,
             isHighlighted: highlightIndex === pos,
             // may need to make lookup table instead of using array includes
             isSelected: selectedCheck(opt),
@@ -497,6 +505,7 @@ export function useSelect<
       } else {
         returnedDisplayOptions.push({
           depth: 0,
+          isDisabled: isDisabled ? isDisabled(option, selectState) : false,
           isHighlighted: highlightIndex === pos,
           isSelected: selectedCheck(option),
           onDeselect: (closeMenu) =>
@@ -515,11 +524,30 @@ export function useSelect<
     }
 
     return returnedDisplayOptions
-  }, [canSelectGroup, highlightIndex, selectedOptions, dispatch, visibleOptions])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isDisabled,
+    canSelectGroup,
+    highlightIndex,
+    selectedOptions,
+    dispatch,
+    visibleOptions
+  ])
+
+  const firstRun = useRef(true)
+  useSafeLayoutEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false
+      return
+    }
+    if (selectedOptions && selectedOptions.length > 0 && options.onSelect) {
+      options.onSelect(selectedOptions[selectedOptions.length - 1])
+    }
+  }, [selectedOptions])
 
   return {
     dispatchAction: (action: Action<SelectAction, object>) => dispatch(action),
-    dispatchAppendOptions: (options) => dispatch(makeAppendOptionsAction(options)),
+    dispatchAppendOptions: (opts) => dispatch(makeAppendOptionsAction(opts)),
     dispatchStateChange: (action) => dispatch(makeSetStateAction(action)),
     displayOptions,
     dropdownContainerProps: {
@@ -529,7 +557,7 @@ export function useSelect<
       onMouseLeave: () => {
         isMouseInsideDropdown.current = false
       },
-      ref: dropdownContainerRef
+      ref: setDropdownContainer as any
     },
     highlightCompletionPercent: getHighlightCompletionPercentage(
       displayOptions,
@@ -538,7 +566,7 @@ export function useSelect<
     highlightIndex,
     inputProps: {
       onChange: (event: ChangeEvent<E>) =>
-        dispatch(makeInputChangeAction(event.target.value)),
+        dispatch(makeInputChangeAction({ showMenu: true, value: event.target.value })),
       onKeyDown: keydownHandler,
       ref: inputRef as MutableRefObject<E>,
       value: selectState.inputState.value

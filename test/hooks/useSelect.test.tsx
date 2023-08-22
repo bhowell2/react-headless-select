@@ -13,18 +13,27 @@ import {
 } from './testData'
 import userEvent from '@testing-library/user-event'
 import { typeArrowDown, typeArrowUp } from '../utils/typeUtils'
-import { OptionType } from '../../src/ts'
+import { getOptionsLength } from '../../src/ts/utils/optionUtils'
+import { OptionType } from '../../src/ts/types/optionTypes'
 
 function getTestInput() {
   return screen.getByTestId(TEST_COMP_INPUT_TEST_ID)
 }
 
 describe('increment and decrement highlight index', () => {
-  test('w/ initialHighlight', async () => {
+  test('w/ initialHighlight - no cycle, disallow no highlight', async () => {
     const user = userEvent.setup()
     const ref = makeUseSelectResultsRef()
-    const Comp = makeTestComp(ref)
-    render(<Comp options={{ options: testOptions }} />)
+    const Comp = makeTestComp<string>(ref)
+    render(
+      <Comp
+        options={{
+          allowNoHighlight: false,
+          cycleHighlightIndex: false,
+          initialState: { options: testOptions }
+        }}
+      />
+    )
     expect(getTestInput()).toBeInTheDocument()
     expect(ref.current.highlightIndex).toEqual(0)
     await user.type(getTestInput(), '{arrowdown}')
@@ -42,14 +51,22 @@ describe('increment and decrement highlight index', () => {
     )
     // hit arrow up many times. should not increase highlightIndex above -1
     await user.type(getTestInput(), typeArrowUp(15))
-    expect(ref.current.highlightIndex).toEqual(-1)
+    expect(ref.current.highlightIndex).toEqual(0)
   })
 
   test('w/ disableInitialHighlight', async () => {
     const user = userEvent.setup()
     const ref = makeUseSelectResultsRef()
     const Comp = makeTestComp(ref)
-    render(<Comp options={{ disableInitialHighlight: true, options: testOptions }} />)
+    render(
+      <Comp
+        options={{
+          allowNoHighlight: true,
+          cycleHighlightIndex: false,
+          initialState: { options: testOptions }
+        }}
+      />
+    )
     expect(getTestInput()).toBeInTheDocument()
     expect(ref.current.highlightIndex).toEqual(-1)
     await user.type(getTestInput(), '{ArrowDown}')
@@ -77,9 +94,12 @@ describe('increment and decrement highlight index', () => {
     render(
       <Comp
         options={{
+          allowNoHighlight: true,
           canSelectGroup: true,
-          disableInitialHighlight: true,
-          options: testOptions
+          cycleHighlightIndex: false,
+          initialState: {
+            options: testOptions
+          }
         }}
       />
     )
@@ -110,8 +130,9 @@ describe('increment and decrement highlight index', () => {
     render(
       <Comp
         options={{
-          disableInitialHighlight: true,
-          options: testOptions,
+          allowNoHighlight: true,
+          cycleHighlightIndex: false,
+          initialState: { options: testOptions },
           showMenuOnFocus: false
         }}
       />
@@ -136,6 +157,126 @@ describe('increment and decrement highlight index', () => {
     await user.type(getTestInput(), typeArrowUp(15))
     expect(ref.current.highlightIndex).toEqual(-1)
   })
+
+  test('cycle highlight index - allowNoHighlight=true', async () => {
+    const user = userEvent.setup()
+    const ref = makeUseSelectResultsRef()
+    const Comp = makeTestComp(ref)
+    render(
+      <Comp
+        options={{
+          allowNoHighlight: true,
+          cycleHighlightIndex: true,
+          initialState: { options: testOptions },
+          showMenuOnFocus: false
+        }}
+      />
+    )
+    expect(getTestInput()).toBeInTheDocument()
+    expect(ref.current.highlightIndex).toEqual(-1)
+    // must arrowdown twice - once to show the menu and the second time to increment highlightIndex
+    await user.type(getTestInput(), '{ArrowDown}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(0)
+    await user.type(getTestInput(), '{ArrowDown}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(2)
+    await user.type(getTestInput(), '{arrowup}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(2)
+    await user.type(getTestInput(), typeArrowUp(3))
+    expect(ref.current.highlightIndex).toEqual(-1)
+    await user.type(getTestInput(), typeArrowUp())
+    // should be at last position
+    expect(ref.current.highlightIndex).toEqual(getOptionsLength(testOptions) - 1)
+    await user.type(getTestInput(), typeArrowDown())
+    expect(ref.current.highlightIndex).toEqual(0)
+  })
+
+  test('cycle highlight index - allowNoHighlight=false', async () => {
+    const user = userEvent.setup()
+    const ref = makeUseSelectResultsRef()
+    const Comp = makeTestComp(ref)
+    render(
+      <Comp
+        options={{
+          allowNoHighlight: false,
+          cycleHighlightIndex: true,
+          initialState: { options: testOptions },
+          showMenuOnFocus: false
+        }}
+      />
+    )
+    expect(getTestInput()).toBeInTheDocument()
+    expect(ref.current.highlightIndex).toEqual(0)
+    // must arrowdown twice - once to show the menu and the second time to increment highlightIndex
+    await user.type(getTestInput(), '{ArrowDown}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(1)
+    await user.type(getTestInput(), '{ArrowDown}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(3)
+    await user.type(getTestInput(), '{arrowup}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(3)
+    await user.type(getTestInput(), typeArrowUp(3))
+    expect(ref.current.highlightIndex).toEqual(0)
+    await user.type(getTestInput(), typeArrowUp())
+    // should be at last position
+    expect(ref.current.highlightIndex).toEqual(getOptionsLength(testOptions) - 1)
+    await user.type(getTestInput(), typeArrowDown())
+    expect(ref.current.highlightIndex).toEqual(0)
+  })
+
+  test('initial highlight index when all disabled', async () => {
+    const user = userEvent.setup()
+    const ref = makeUseSelectResultsRef()
+    const Comp = makeTestComp(ref)
+    render(
+      <Comp
+        options={{
+          // even though there's no highlight here nothing can be highlighted...
+          allowNoHighlight: false,
+          cycleHighlightIndex: true,
+          initialState: { options: testOptions },
+          isDisabled: () => true,
+          showMenuOnFocus: false
+        }}
+      />
+    )
+    expect(getTestInput()).toBeInTheDocument()
+    expect(ref.current.highlightIndex).toEqual(-1)
+    // must arrowdown twice - once to show the menu and the second time to increment highlightIndex
+    await user.type(getTestInput(), '{ArrowDown}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(-1)
+  })
+
+  test('does not highlight disabled option', async () => {
+    const user = userEvent.setup()
+    const ref = makeUseSelectResultsRef()
+    const Comp = makeTestComp(ref)
+    render(
+      <Comp
+        options={{
+          allowNoHighlight: false,
+          cycleHighlightIndex: true,
+          initialState: { options: testOptions },
+          isDisabled: (option) => option.label === 'one',
+          showMenuOnFocus: false
+        }}
+      />
+    )
+    expect(getTestInput()).toBeInTheDocument()
+    expect(ref.current.highlightIndex).toEqual(0)
+    // must arrowdown twice - once to show the menu and the second time to increment highlightIndex
+    await user.type(getTestInput(), '{ArrowDown}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(1)
+    await user.type(getTestInput(), '{ArrowDown}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(3)
+    await user.type(getTestInput(), '{arrowup}{ArrowDown}')
+    expect(ref.current.highlightIndex).toEqual(3)
+    await user.type(getTestInput(), typeArrowUp(3))
+    expect(ref.current.highlightIndex).toEqual(0)
+    await user.type(getTestInput(), typeArrowUp())
+    // should be at last position
+    expect(ref.current.highlightIndex).toEqual(getOptionsLength(testOptions) - 1)
+    await user.type(getTestInput(), typeArrowDown())
+    expect(ref.current.highlightIndex).toEqual(0)
+  })
 })
 
 describe('text filtering', () => {
@@ -146,9 +287,9 @@ describe('text filtering', () => {
     render(
       <Comp
         options={{
+          allowNoHighlight: true,
           canSelectGroup: true,
-          disableInitialHighlight: true,
-          options: testOptions
+          initialState: { options: testOptions }
         }}
       />
     )
@@ -186,8 +327,7 @@ describe('text filtering', () => {
         options={{
           canSelectGroup: true,
           disableFiltering: true,
-          disableInitialHighlight: true,
-          options: testOptions
+          initialState: { options: testOptions }
         }}
       />
     )
@@ -206,7 +346,9 @@ describe('option selection', () => {
     render(
       <Comp
         options={{
-          options: testOptions
+          initialState: {
+            options: testOptions
+          }
         }}
       />
     )
@@ -233,8 +375,10 @@ describe('option selection', () => {
     render(
       <Comp
         options={{
-          allowMultiSelect: true,
-          options: testOptions
+          initialState: {
+            options: testOptions
+          },
+          multiSelect: true
         }}
       />
     )
@@ -268,9 +412,11 @@ describe('option selection', () => {
     render(
       <Comp
         options={{
-          allowMultiSelect: true,
           disableSelection: true,
-          options: testOptions
+          initialState: {
+            options: testOptions
+          },
+          multiSelect: true
         }}
       />
     )
@@ -291,9 +437,11 @@ describe('option selection', () => {
     render(
       <Comp
         options={{
-          allowMultiSelect: true,
           canSelectGroup: true,
-          options: nestedGroupedOptions
+          initialState: {
+            options: nestedGroupedOptions
+          },
+          multiSelect: true
         }}
       />
     )
@@ -319,9 +467,11 @@ describe('option selection', () => {
     render(
       <Comp
         options={{
-          allowMultiSelect: true,
           canSelectGroup: false,
-          options: nestedGroupedOptions
+          initialState: {
+            options: nestedGroupedOptions
+          },
+          multiSelect: true
         }}
       />
     )
@@ -341,12 +491,12 @@ describe('option selection', () => {
     render(
       <Comp
         options={{
-          allowMultiSelect: true,
           canSelectGroup: false,
-          initialOptions: {
+          initialState: {
+            options: nestedGroupedOptions,
             selectedOptions: [nestedGroupedOptions[1]]
           },
-          options: nestedGroupedOptions
+          multiSelect: true
         }}
       />
     )
@@ -362,17 +512,19 @@ describe('option selection', () => {
 
   test('selectively disable option selection', async () => {
     const copy = JSON.parse(JSON.stringify(testOptions))
-    copy[0].disableSelection = true
-    const canSelect = (option: OptionType<string>) => option.value !== 'four.3'
+    const isDisabled = (option: OptionType<string>) => option.value === 'four.3'
     const ref = makeUseSelectResultsRef<string>()
     const Comp = makeTestComp<string>(ref)
     render(
       <Comp
         options={{
-          allowMultiSelect: true,
-          canSelect,
+          allowNoHighlight: false,
           canSelectGroup: false,
-          options: copy
+          initialState: {
+            options: copy
+          },
+          isDisabled,
+          multiSelect: true
         }}
       />
     )
@@ -381,15 +533,15 @@ describe('option selection', () => {
     act(() => {
       ref.current.displayOptions[0].onSelect()
     })
-    expect(ref.current.selectedOptions.length).toEqual(0)
+    expect(ref.current.selectedOptions.length).toEqual(1)
     act(() => {
       ref.current.displayOptions[3].groupOptions![2].onSelect()
     })
-    expect(ref.current.selectedOptions.length).toEqual(0)
+    expect(ref.current.selectedOptions.length).toEqual(1)
     act(() => {
       ref.current.displayOptions[3].groupOptions![3].onSelect()
     })
-    expect(ref.current.selectedOptions.length).toEqual(1)
+    expect(ref.current.selectedOptions.length).toEqual(2)
   })
 })
 
@@ -401,15 +553,20 @@ test('onSearch is called', async () => {
   render(
     <Comp
       options={{
-        allowMultiSelect: true,
         canSelectGroup: false,
+        initialState: {
+          options: testOptions
+        },
+        multiSelect: true,
         onSearch: (val) => {
           onSearchCalls.push(val)
         },
-        onSelect: () => {
-          fail('onSelect should not have been called')
-        },
-        options: testOptions
+        onStateChange: (prevState, nextState, action) => {
+          if (action.type === 'OPTION_SELECTED') {
+            fail('onSelect should not have been called')
+          }
+          return nextState
+        }
       }}
     />
   )

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.errorIfDev = exports.warnIfDev = exports.logIfDev = exports.runIfDev = exports.__DEV__ = void 0;
+/* eslint-disable @typescript-eslint/naming-convention */
 exports.__DEV__ = process.env.NODE_ENV !== 'production';
 function runIfDev(fn) {
     if (exports.__DEV__) {

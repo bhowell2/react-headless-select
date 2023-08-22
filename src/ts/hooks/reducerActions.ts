@@ -1,13 +1,13 @@
-import { OptionType } from './useSelect'
+import { ExtObj, OptionType } from '../types/optionTypes'
 
-export interface SelectState<T, G = T> {
+export interface SelectState<T, G = T, O extends ExtObj = ExtObj> {
   highlightIndex: number
   inputState: {
     isInputFocused: boolean
     showMenu: boolean
     value: string
   }
-  options: OptionType<T, G>[]
+  options: OptionType<T, G, O>[]
   /**
    * This is not the value on the actual input, but the value that can be used
    * to manually filter/supply the options. E.g., when the user selects a value
@@ -20,23 +20,20 @@ export interface SelectState<T, G = T> {
    * it will be an empty string (if the user then types)
    */
   pseudoInputValue: string
-  selectedOptions: OptionType<T, G>[]
-  visibleOptions: OptionType<T, G>[]
+  selectedOptions: OptionType<T, G, O>[]
+  visibleOptions: OptionType<T, G, O>[]
 }
 
-export const initialDefaultSelectState: SelectState<any, any> = {
+export const initialDefaultSelectState: SelectState<any, any, any> = {
   // This is actually dependent on the allowNoHighlight option (if true, this -1, else 0)
   // this is handled in the reducer initialization
   highlightIndex: -1,
-
   inputState: {
     isInputFocused: false,
     showMenu: false,
     value: ''
   },
-
   options: [],
-
   pseudoInputValue: '',
   selectedOptions: [],
   visibleOptions: []
@@ -88,16 +85,25 @@ export type InputChangeAction = Action<
   'INPUT_CHANGE',
   {
     value: string
+    /**
+     * There are many times that the input value will change, but it is
+     * not b/c the field is actually focused, so need to opt into actually
+     * displaying the menu on input change.
+     *
+     * NOTE: useSelect hook will set this to true if the input is focused
+     * @default false
+     */
+    showMenu?: boolean
   }
 >
 export const isInputChangeAction = isType<'INPUT_CHANGE', InputChangeAction>(
   SELECT_ACTIONS.INPUT_CHANGE
 )
-export function makeInputChangeAction(value: string): InputChangeAction {
+export function makeInputChangeAction(
+  payload: InputChangeAction['payload']
+): InputChangeAction {
   return {
-    payload: {
-      value
-    },
+    payload,
     type: SELECT_ACTIONS.INPUT_CHANGE
   }
 }
@@ -105,10 +111,10 @@ export function makeInputChangeAction(value: string): InputChangeAction {
 //
 // OPTION_SELECTED
 //
-export type OptionSelectedAction<T, G = T> = Action<
+export type OptionSelectedAction<T, G = T, O extends ExtObj = ExtObj> = Action<
   'OPTION_SELECTED',
   {
-    option: OptionType<T, G>
+    option: OptionType<T, G, O>
     /**
      * @default to whatever is provided in the reducer options (when multiSelect = false, single select = true)
      */
@@ -124,9 +130,9 @@ export const isOptionSelectedAction = isType<
   'OPTION_SELECTED',
   OptionSelectedAction<any, any>
 >(SELECT_ACTIONS.OPTION_SELECTED)
-export function makeOptionSelectedAction<T, G>(
-  payload: OptionSelectedAction<any>['payload']
-): OptionSelectedAction<T, G> {
+export function makeOptionSelectedAction<T, G, O extends ExtObj>(
+  payload: OptionSelectedAction<T, G, O>['payload']
+): OptionSelectedAction<T, G, O> {
   return {
     payload,
     type: SELECT_ACTIONS.OPTION_SELECTED
@@ -136,11 +142,12 @@ export function makeOptionSelectedAction<T, G>(
 //
 // OPTION_DESELECTED
 //
-export type OptionDeselectedAction<T, G> = Action<
+
+export type OptionDeselectedAction<T, G, O extends ExtObj> = Action<
   'OPTION_DESELECTED',
   {
     /** The option to remove from the selectedOptions array. */
-    option: OptionType<T, G>
+    option: OptionType<T, G, O>
     /**
      * When deselecting an option the menu will NOT be closed by default, however
      * this can be supplied to override that behavior.
@@ -151,11 +158,11 @@ export type OptionDeselectedAction<T, G> = Action<
 >
 export const isOptionDeselectedAction = isType<
   'OPTION_DESELECTED',
-  OptionDeselectedAction<any, any>
+  OptionDeselectedAction<any, any, ExtObj>
 >(SELECT_ACTIONS.OPTION_DESELECTED)
-export function makeOptionDeselectedAction<T, G>(
-  payload: OptionDeselectedAction<T, G>['payload']
-): OptionDeselectedAction<T, G> {
+export function makeOptionDeselectedAction<T, G, O extends ExtObj>(
+  payload: OptionDeselectedAction<T, G, O>['payload']
+): OptionDeselectedAction<T, G, O> {
   return {
     payload,
     type: SELECT_ACTIONS.OPTION_DESELECTED
@@ -220,7 +227,7 @@ export function makeDecrementHighlightIndexAction(
 export type SetOptionsAction = Action<
   'SET_OPTIONS',
   {
-    options: OptionType<any, any>[]
+    options: OptionType<any, any, any>[]
     /**
      * Attempts to find the last highlight index before the set operation. This is
      * useful for when the highlight index is being reset.
@@ -334,21 +341,21 @@ export function makeSetInputFocusedAction(
 // SET_STATE
 //
 
-export type SetStateAction<T, G = T> = Action<
+export type SetStateAction<T, G = T, O extends ExtObj = ExtObj> = Action<
   'SET_STATE',
   {
     /**
      * Allows for updating the state in any way.
      */
-    setState: (state: SelectState<T, G>) => SelectState<T, G>
+    setState: (state: SelectState<T, G, O>) => SelectState<T, G, O>
   }
 >
-export const isSetStateAction = isType<'SET_STATE', SetStateAction<any>>(
+export const isSetStateAction = isType<'SET_STATE', SetStateAction<any, any, any>>(
   SELECT_ACTIONS.SET_STATE
 )
-export function makeSetStateAction<T, G = T>(
-  setState: SetStateAction<T, G>['payload']['setState']
-): SetStateAction<T, G> {
+export function makeSetStateAction<T, G = T, O extends ExtObj = ExtObj>(
+  setState: SetStateAction<T, G, O>['payload']['setState']
+): SetStateAction<T, G, O> {
   return {
     payload: {
       setState

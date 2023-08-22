@@ -1,4 +1,4 @@
-import { OptionType } from '../../src/ts/hooks/useSelect'
+import { OptionType } from '../../src/ts/types/optionTypes'
 
 export const fourGroupOptions = [
   {

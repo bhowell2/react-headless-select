@@ -1,11 +1,11 @@
-import { isGroupSelectOption, OptionType } from './useSelect'
 import {
   defaultIsOptionSelectedCheck,
   defaultOptionEqualityCheck,
+  flattenOptions,
   getOptionAtIndex,
   getOptionIndex,
-  getOptionsLength,
   indexOfFilterMatch,
+  isGroupSelectOption,
   OptionEqualityCheck,
   OptionSelectedCheck,
   OptionsFilterFn,
@@ -29,36 +29,35 @@ import {
   SelectState
 } from './reducerActions'
 import { useLatestRef } from './internal/useLatestRef'
+import { ExtObj, OptionType } from '../types/optionTypes'
 
-export interface UseSelectReducerOptionsBase<T, G = T> {
+type IsDisabledFn<T, G, O extends ExtObj> = (
+  option: OptionType<T, G, O>,
+  state: SelectState<T, G, O>
+) => boolean
+
+export interface UseSelectReducerOptions<T, G = T, O extends ExtObj = ExtObj> {
   /**
-   * The no-highlight index allows for a value of -1, which does not highlight
-   * anything in the list of options.
+   * Allows for 'no-highlighting' to occur (i.e., highlightIndex = -1).
    *
-   * Note, if this is true, it may seem to interact weirdly with cycleHighlightIndex
+   * Note: if this is true, it may seem to interact weirdly with cycleHighlightIndex
    * - where this will cause the index to go from 0 -> -1 -> max or max -> -1 -> 0.
    * @default false
    */
   allowNoHighlight?: boolean
   /**
-   * By default, all options are selectable, but this can be supplied
-   * to disable selection of an option.
-   *
-   * This should return true if the option IS selectable; false otherwise.
-   *
-   * If an item is already selected then this will have no bearing.
-   *
-   * Note: this should be memoized.
-   *
-   * @default undefined (i.e., all options are selectable)
+   * If the group options should be selectable.
+   * @default false
    */
-  canSelect?: (option: OptionType<T, G>) => boolean
   canSelectGroup?: boolean
   /** @default true when single selection, false when multiSelect */
   closeMenuOnSelection?: boolean
   /**
    * When the highlight index reached the maximum or minimum value, it will
-   * cycle to the other value (i.e., 0 -> max or max -> 0)
+   * cycle to the other value (i.e., 0 -> max or max -> 0).
+   *
+   * Note: in the case of allowNoHighlight, this will go from 0 -> -1 -> max,
+   * but then go from max -> 0 (skipping -1)
    * @default true
    */
   cycleHighlightIndex?: boolean
@@ -93,7 +92,7 @@ export interface UseSelectReducerOptionsBase<T, G = T> {
    *
    * @default String#indexOf match will be used
    */
-  filterFn?: OptionsFilterFn<T, G> | null
+  filterFn?: OptionsFilterFn<T, G, O> | null
   /**
    * By default, when an item is selected and the input text matches
    * the label of the selected item, then filtering will not be done.
@@ -103,7 +102,7 @@ export interface UseSelectReducerOptionsBase<T, G = T> {
    * Will be (deep) merged with defaultSelectState.
    * @default defaultSelectState
    */
-  initialState?: Partial<SelectState<T, G>>
+  initialState?: Partial<SelectState<T, G, O>>
   inputOptions?: {
     /**
      * If the user backspaces out a selected option then the option will be
@@ -119,11 +118,24 @@ export interface UseSelectReducerOptionsBase<T, G = T> {
     completelyRemoveSelectOnBackspace?: boolean
   }
   /**
+   * By default, all options are selectable, but this can be supplied
+   * to disable selection of an option.
+   *
+   * This should return true if the option IS selectable; false otherwise.
+   *
+   * If an item is already selected then this will have no bearing.
+   *
+   * NOTE: should be memoized.
+   *
+   * @default undefined (i.e., all options are selectable)
+   */
+  isDisabled?: IsDisabledFn<T, G, O>
+  /**
    * Allows to override the default implementation which checks if an
    * option was by using a triple equal check on the option's value
    * (i.e., OptionType#value).
    *
-   * Note: should be memoized.
+   * NOTE: should be memoized.
    */
   isSelectedCheck?: OptionSelectedCheck<T, G>
   /**
@@ -137,7 +149,7 @@ export interface UseSelectReducerOptionsBase<T, G = T> {
    * mutated directly, but should be immutably updated - if a different object
    * is returned then that object will be used, otherwise null or undefined
    * will result in the reducers nextState being returned. There will be some
-   * cases where the previous state is returned
+   * cases where the previous state is returned.
    *
    * Note, the is*Action methods can be used to check the action type for casting.
    */
@@ -155,76 +167,14 @@ export interface UseSelectReducerOptionsBase<T, G = T> {
   showMenuOnFocus?: boolean
 }
 
-// In this case there is no group type, so we need to type it as any here to avoid
-// a typing conflict on the union of UseSelectOptionsWithoutGroupSelect and
-// UseSelectOptionsWithGroupSelect.
-export interface UseSelectReducerOptionsWithoutGroupSelect<T>
-  extends UseSelectReducerOptionsBase<T, any> {
-  /**
-   * If the group/groupLabel itself is selectable. If this is the case
-   * then the highlight index will include the groupLabel itself. Note,
-   * when a group is selected, then the GroupSelectOption will be returned.
-   */
-  canSelectGroup?: false
-  // /**
-  //  * When the user clicks an item in the dropdown, or when the user
-  //  * selects an item with the arrow keys (i.e., highlightIndex > -1).
-  //  *
-  //  * This differs from 'onChange' in that it is when an option is actually
-  //  * selected and not when some text input occurs.
-  //  */
-  // onSelect?: (value: string, selectedOption: SelectOption<T>) => void
-}
-
-export interface UseSelectReducerOptionsWithGroupSelect<T, G = T>
-  extends UseSelectReducerOptionsBase<T, G> {
-  /**
-   * If the group/groupLabel itself is selectable. If this is the case
-   * then the highlight index will include the groupLabel itself. Note,
-   * when a group is selected, the GroupSelectOption will be returned.
-   *
-   * Currently, this allows for selecting a group within a group (that has
-   * already been selected) - the user could disable this behavior on their
-   * end if it is not desired, but it may be that nested groups aren't really
-   * ever even used anyway.
-   */
-  canSelectGroup?: true
-  // /**
-  //  * When the user clicks an item in the dropdown, or when the user
-  //  * selects an item with the arrow keys (i.e., highlightIndex > -1).
-  //  *
-  //  * The selected option may be a GroupSelectOption, you can use 'isGroupSelectOption'
-  //  * to type guard/check the selected option if desired.
-  //  */
-  // onSelect?: (value: string, selectedOption: OptionType<T, G>) => void
-}
-
-export type UseSelectReducerOptions<T, G> =
-  | UseSelectReducerOptionsWithoutGroupSelect<T>
-  | UseSelectReducerOptionsWithGroupSelect<T, G>
-
-// Just a helper to handle redundant behavior wherever visible options are set
 function setVisibleOptions(
-  nextState: SelectState<any, any>,
-  nextVisibleOptions: OptionType<any, any>[],
-  nextVisibleOptionsLengthRef: MutableRefObject<number>,
+  nextState: SelectState<any, any, any>,
+  nextVisibleOptions: OptionType<any, any, any>[],
+  flattenedVisibleOptionsRef: MutableRefObject<OptionType<any, any, any>[]>,
   canSelectGroup: boolean
 ) {
   nextState.visibleOptions = nextVisibleOptions
-  /*
-   * Don't want to make this calculation on every iteration as it is somewhat
-   * expensive and unnecessary. This is b/c we allow nested grouping and,
-   * optionally, selection of the groups themselves; otherwise we could just
-   * use the visibleOptions.length and be done with it. In the future may want
-   * to consider an optimization option that specifies that nested grouping
-   * does not occur. This would simplify and improve the performance of the
-   * highlightIndex calculation in the displayOptions calculation (i.e., could
-   * simply increment and decrement).
-   * */
-  nextVisibleOptionsLengthRef.current = getOptionsLength(
-    nextVisibleOptions,
-    canSelectGroup
-  )
+  flattenedVisibleOptionsRef.current = flattenOptions(nextVisibleOptions, canSelectGroup)
 }
 
 /**
@@ -237,40 +187,37 @@ function setVisibleOptions(
  * new state since nothing should have changed).
  */
 function finalStateHelper(
-  prevState: SelectState<any>,
-  nextState: SelectState<any>,
-  onStateChange: UseSelectReducerOptions<any, any>['onStateChange'],
+  prevState: SelectState<any, any, any>,
+  nextState: SelectState<any, any, any>,
+  onStateChange: UseSelectReducerOptions<any, any, any>['onStateChange'],
   action: Action<any, any>
 ) {
   return onStateChange?.(prevState, nextState, action) || nextState
 }
 
-function applyFilterFn<T>(
+function applyFilterFn<T, G = T, O extends ExtObj = ExtObj>(
   inputVal: string,
-  options: OptionType<T>[],
-  filterFn?: OptionsFilterFn<T> | null
-): OptionType<T>[] {
+  options: OptionType<T, G, O>[],
+  filterFn?: OptionsFilterFn<T, G, O> | null
+): OptionType<T, G, O>[] {
   return filterFn ? filterFn(inputVal, options) : options
 }
 
-function isHighlightIndexFullyDecremented(
-  highlightIndex: number,
-  allowNoHighlight?: boolean
-) {
-  return (
-    (highlightIndex === 0 && !allowNoHighlight) ||
-    (highlightIndex === -1 && allowNoHighlight)
-  )
+interface UseSelectReducerResult<T, G = T, O extends ExtObj = ExtObj> {
+  dispatch: Dispatch<Action<SelectAction, object>>
+  /** Used for quick highlight item lookup. */
+  highlightItem: OptionType<T, G, O>
+  selectState: SelectState<T, G, O>
 }
 
-export function useSelectReducer<T, G = T>(
-  options: UseSelectReducerOptions<T, G>
-): [SelectState<T, G>, Dispatch<Action<SelectAction, object>>] {
+export function useSelectReducer<T, G = T, O extends ExtObj = ExtObj>(
+  options: UseSelectReducerOptions<T, G, O>
+): UseSelectReducerResult<T, G, O> {
   const {
-    canSelect,
     disableSelection,
     disableFiltering,
-    filterFn = indexOfFilterMatch,
+    filterFn = indexOfFilterMatch as OptionsFilterFn<T, G, O>,
+    isDisabled,
     isSelectedCheck = defaultIsOptionSelectedCheck,
     onStateChange,
     multiSelect,
@@ -283,51 +230,117 @@ export function useSelectReducer<T, G = T>(
     canSelectGroup
   } = options
 
-  // optimization to avoid calculating the visible options length every time
-  // (b/c grouping impacts the length would need to iterate through the options
-  // every time to get the length)
-  const visibleOptionsLengthRef = useRef<number>(0)
+  // As a performance optimization and, honestly, a simplification in the next
+  // highlight index calculation this is used to linearly iterate over the options
+  // rather than having to go within a group's options each time the highlight
+  // index is incremented . I.e., we pay the price to flatten the options once
+  // (with a bit of extra space) rather than every increment/decrement of the
+  // highlight index.
+  const flattenedVisibleOptionsRef = useRef<OptionType<T, G, O>[]>([])
 
   // Also need to find the latest state
-  const setNextOpts = (nextState: SelectState<any>, inputVal: string) => {
+  const setNextOpts = (nextState: SelectState<T, G, O>, inputVal: string) => {
     if (
-      nextState.selectedOptions &&
-      textMatchesSelectedOptions(inputVal, nextState.selectedOptions)
+      (nextState.selectedOptions &&
+        textMatchesSelectedOptions(inputVal, nextState.selectedOptions)) ||
+      disableFiltering
     ) {
-      // Right now, showing everything, b/c the input text matches a selected option.
-      // In the future may want to adjust this to avoid showing all options when the
-      // input matches a selected option. May have to add in more tracking to determine
-      // if the user just selected the value and hasn't made any other input changes.
       setVisibleOptions(
         nextState,
         nextState.options,
-        visibleOptionsLengthRef,
-        !!canSelectGroup
-      )
-    } else if (!disableFiltering) {
-      setVisibleOptions(
-        nextState,
-        applyFilterFn(inputVal, nextState.options, filterFn),
-        visibleOptionsLengthRef,
+        flattenedVisibleOptionsRef,
         !!canSelectGroup
       )
     } else {
-      // set to all as well??
       setVisibleOptions(
         nextState,
-        nextState.options,
-        visibleOptionsLengthRef,
+        applyFilterFn(inputVal, nextState.options, filterFn),
+        flattenedVisibleOptionsRef,
         !!canSelectGroup
       )
     }
   }
 
-  const setNextHighlightIndex = (
-    prevOpt: OptionType<any>[],
+  const incOrDecHighIdx = (
+    currentIndex: number,
+    increment: boolean,
+    nextState: SelectState<T, G, O>,
+    // track to make sure we don't end up in infinite loop
+    didCycle = false
+  ): void => {
+    const flatOpts = flattenedVisibleOptionsRef.current
+    // increment cycle case
+    // at end and didn't already cycle
+    if (increment && !didCycle && currentIndex === flatOpts.length - 1) {
+      if (cycleHighlightIndex) {
+        // can't simply set this to 0, b/c 0 could NOT be selectable, so now recursively
+        // call this function starting at 0 and decrementing rather than incrementing
+        return incOrDecHighIdx(0, true, nextState, true)
+      }
+      // nothing to be done here b/c it does not cycle and cannot be incremented anymore
+      return
+    }
+    // decrement - cycle case
+    if (
+      !increment &&
+      !didCycle &&
+      ((allowNoHighlight && currentIndex === -1) ||
+        (!allowNoHighlight && currentIndex === 0))
+    ) {
+      if (cycleHighlightIndex) {
+        return incOrDecHighIdx(flatOpts.length - 1, false, nextState, true)
+      }
+      // nothing to be done here b/c it does not cycle and cannot be decremented anymore
+      return
+    }
+    // Nothing is disabled, so can simply increment or decrement
+    if (!isDisabled) {
+      if (increment) {
+        nextState.highlightIndex = didCycle ? currentIndex : currentIndex + 1
+      } else {
+        nextState.highlightIndex = didCycle ? currentIndex : currentIndex - 1
+      }
+      return
+    }
+    if (increment) {
+      for (let i = didCycle ? currentIndex : currentIndex + 1; i < flatOpts.length; i++) {
+        if (!isDisabled(flatOpts[i], nextState)) {
+          nextState.highlightIndex = i
+          return
+        }
+      }
+      if (!didCycle && cycleHighlightIndex)
+        return incOrDecHighIdx(0, true, nextState, true)
+      // we have gotten to the end and not found anything...
+    } else {
+      // decrement
+      for (let i = didCycle ? currentIndex : currentIndex - 1; i >= 0; i--) {
+        if (!isDisabled(flatOpts[i], nextState)) {
+          nextState.highlightIndex = i
+          return
+        }
+      }
+      if (!didCycle && cycleHighlightIndex)
+        return incOrDecHighIdx(flatOpts.length - 1, false, nextState, true)
+    }
+    // cannot increment or decrement... do nothing
+  }
+
+  /**
+   * Handles finding the next highlight index when the options change.
+   * First this will attempt to find the previous option in the new
+   * list of options, but if that cannot be found then it will try to
+   * retain the highlightIndex by keeping it the same or moving it to
+   * the next available option.
+   *
+   * NOTE: this is not the same thing as incrementing/decrementing the highlight index.
+   */
+  const findNextHighlightIndex = (
+    prevOpt: OptionType<T, G, O>[],
     prevHighIdx: number,
-    nextOpts: OptionType<any>[],
+    nextOpts: OptionType<T, G, O>[],
     findNextIndex: boolean,
-    nextState: SelectState<any>
+    nextState: SelectState<T, G, O>
   ) => {
     let didFindLastIndex = false
     if (findNextIndex) {
@@ -345,30 +358,18 @@ export function useSelectReducer<T, G = T>(
         }
       }
     }
+    // The previously highlighted option does not exist in the next options;
+    // list; fallback to finding the next available highlight index
     if (!didFindLastIndex) {
-      nextState.highlightIndex = -1
+      incOrDecHighIdx(0, true, nextState, true)
     }
   }
 
   function selectReducer<SA extends SelectAction, A extends Action<SA, object>>(
-    state: SelectState<T, G>,
+    state: SelectState<T, G, O>,
     action: A
-  ): SelectState<T, G> {
+  ): SelectState<T, G, O> {
     // Non-rerender conditions (unless user returns new state with their onStateChange handler)
-    if (
-      isDecrementHighlightIndexAction(action) &&
-      isHighlightIndexFullyDecremented(state.highlightIndex, allowNoHighlight) &&
-      !cycleHighlightIndex
-    ) {
-      return finalStateHelper(state, state, onStateChange, action)
-    }
-    if (
-      isIncrementHighlightIndexAction(action) &&
-      state.highlightIndex === visibleOptionsLengthRef.current - 1 &&
-      !cycleHighlightIndex
-    ) {
-      return finalStateHelper(state, state, onStateChange, action)
-    }
     if (
       isSetMenuOpenAction(action) &&
       state.inputState.showMenu === action.payload.open
@@ -377,11 +378,11 @@ export function useSelectReducer<T, G = T>(
     }
 
     // All of these will cause a re-render (unless user returns prevState from onStateChange handler)
-    let nextState: SelectState<any> = { ...state }
+    let nextState: SelectState<any, any, any> = { ...state }
 
     const handleInputChange = (
       value: string,
-      showMenu = true,
+      showMenu = false,
       findNextIndex = true,
       fromSelection = false
     ) => {
@@ -408,7 +409,7 @@ export function useSelectReducer<T, G = T>(
         nextState.pseudoInputValue = value
       }
       setNextOpts(nextState, value)
-      setNextHighlightIndex(
+      findNextHighlightIndex(
         state.visibleOptions,
         state.highlightIndex,
         nextState.visibleOptions,
@@ -417,15 +418,22 @@ export function useSelectReducer<T, G = T>(
       )
     }
 
+    //
+    // INPUT CHANGE
+    //
     if (isInputChangeAction(action)) {
       // We do NOT auto-select when the user's input matches a label; however, if the user
       // has selected an option and then changes the input that was matching the option, the
       // option should be de-selected
-      handleInputChange(action.payload.value)
-    } else if (isOptionSelectedAction(action)) {
-      const selectedOption = action.payload.option
-      // make sure is selectable first
-      if (!disableSelection || !(canSelect && canSelect(selectedOption))) {
+      handleInputChange(action.payload.value, action.payload.showMenu)
+    }
+    //
+    // OPTION SELECTED
+    //
+    else if (isOptionSelectedAction(action)) {
+      const selectedOption = action.payload.option as OptionType<T, G, O>
+      const canSelectOption = isDisabled ? !isDisabled(selectedOption, state) : true
+      if (!disableSelection && canSelectOption) {
         if (multiSelect && !isSelectedCheck(selectedOption, nextState.selectedOptions)) {
           nextState.selectedOptions = [...nextState.selectedOptions, selectedOption]
           nextState.highlightIndex = -1
@@ -450,7 +458,11 @@ export function useSelectReducer<T, G = T>(
         }
         nextState.inputState = { ...nextState.inputState, showMenu: nextShowMenuState }
       }
-    } else if (isOptionDeselectedAction(action)) {
+    }
+    //
+    // OPTION DE-SELECTED
+    //
+    else if (isOptionDeselectedAction(action)) {
       const curOptions = nextState.selectedOptions
       const { option } = action.payload
       const idx = getOptionIndex(curOptions, option, canSelectGroup, optionEqualityCheck)
@@ -469,33 +481,25 @@ export function useSelectReducer<T, G = T>(
           ...curOptions.splice(idx + 1, curOptions.length)
         ]
       }
-    } else if (isIncrementHighlightIndexAction(action)) {
-      let didIncrement = false
-      // TODO: need to constrain the incrementation by the amount of available
-      if (nextState.highlightIndex < visibleOptionsLengthRef.current - 1) {
-        didIncrement = true
-        nextState.highlightIndex = nextState.highlightIndex + 1
-      }
-      if (cycleHighlightIndex && !didIncrement) {
-        nextState.highlightIndex = 0
-      }
-    } else if (isDecrementHighlightIndexAction(action)) {
-      let didDecrement = false
-      if (
-        (allowNoHighlight && state.highlightIndex > -1) ||
-        (!allowNoHighlight && state.highlightIndex > 0)
-      ) {
-        didDecrement = true
-        nextState.highlightIndex = nextState.highlightIndex - 1
-      }
-      // if it didn't decrement (we maxed out the decrement),
-      // and cycling is allowed then we need to cycle
-      if (cycleHighlightIndex && !didDecrement) {
-        nextState.highlightIndex = visibleOptionsLengthRef.current - 1
-      }
-    } else if (isSetOptionsAction(action)) {
+    }
+    //
+    // INCREMENT HIGHLIGHT INDEX
+    //
+    else if (isIncrementHighlightIndexAction(action)) {
+      incOrDecHighIdx(state.highlightIndex, true, nextState)
+    }
+    //
+    // DECREMENT HIGHLIGHT INDEX
+    //
+    else if (isDecrementHighlightIndexAction(action)) {
+      incOrDecHighIdx(state.highlightIndex, false, nextState)
+    }
+    //
+    // SET OPTIONS
+    //
+    else if (isSetOptionsAction(action)) {
       const nextOptions = action.payload.options
-      setNextHighlightIndex(
+      findNextHighlightIndex(
         state.options,
         state.highlightIndex,
         nextOptions,
@@ -504,19 +508,35 @@ export function useSelectReducer<T, G = T>(
       )
       nextState.options = action.payload.options
       setNextOpts(nextState, nextState.inputState.value)
-    } else if (isAppendOptionsAction(action)) {
+    }
+    //
+    // APPEND OPTIONS
+    //
+    else if (isAppendOptionsAction(action)) {
       nextState.options = [...nextState.options, ...action.payload.options]
       setNextOpts(nextState, nextState.inputState.value)
-    } else if (isSetMenuOpenAction(action)) {
+    }
+    //
+    // SET MENU OPEN
+    //
+    else if (isSetMenuOpenAction(action)) {
       nextState.inputState = { ...nextState.inputState, showMenu: action.payload.open }
-    } else if (isSetInputFocusedAction(action)) {
+    }
+    //
+    // SET INPUT FOCUSED
+    //
+    else if (isSetInputFocusedAction(action)) {
       const { menuOpen = showMenuOnFocus, focused } = action.payload
       nextState.inputState = {
         ...nextState.inputState,
         isInputFocused: focused,
         showMenu: menuOpen
       }
-    } else if (isSetStateAction(action)) {
+    }
+    //
+    // SET STATE
+    //
+    else if (isSetStateAction(action)) {
       nextState = action.payload.setState(state)
     }
 
@@ -529,7 +549,7 @@ export function useSelectReducer<T, G = T>(
     return manualOnStateChangeResp || nextState
   }
 
-  const initialState = useMemo<SelectState<T, G>>(() => {
+  const initialState = useMemo<SelectState<T, G, O>>(() => {
     const nextState = {
       ...initialDefaultSelectState,
       ...options.initialState,
@@ -540,6 +560,10 @@ export function useSelectReducer<T, G = T>(
       }
     }
     setNextOpts(nextState, nextState.inputState.value)
+    if (!allowNoHighlight) {
+      // start at beginning and try to go forward
+      incOrDecHighIdx(-1, true, nextState)
+    }
     return nextState
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -547,11 +571,15 @@ export function useSelectReducer<T, G = T>(
   // This is a hack around the dispatch operation of useReducer. Dispatch of useReducer
   // always seems to trigger a re-render, which is unnecessary in certain situations
   // (e.g., the highlight index is at the max or minimum value)
-  const [selectState, setSelectState] = useState<SelectState<T, G>>(initialState)
+  const [selectState, setSelectState] = useState<SelectState<T, G, O>>(initialState)
   const selectReducerRef = useLatestRef(selectReducer)
   const dispatch = useCallback((action: Action<SelectAction, object>) => {
     setSelectState((prevState) => selectReducerRef.current(prevState, action))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  return [selectState, dispatch]
+  return {
+    dispatch,
+    highlightItem: flattenedVisibleOptionsRef.current[selectState.highlightIndex],
+    selectState
+  }
 }

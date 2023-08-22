@@ -15,9 +15,13 @@ type UseSelectResultsRef<T, G> = {
   current: UseSelectResult<T, G>
 }
 
-export const makeUseSelectResultsRef = <T, G = T>() => ({} as UseSelectResultsRef<T, G>)
+export function makeUseSelectResultsRef<T = string, G = T>() {
+  return {} as UseSelectResultsRef<T, G>
+}
 
-export function makeTestComp<T, G = T>(useSelectResultsRef: UseSelectResultsRef<T, G>) {
+export function makeTestComp<T = string, G = T>(
+  useSelectResultsRef: UseSelectResultsRef<T, G>
+) {
   return function TestComp(props: TestCompProps<T, G>) {
     const res = useSelect({ showMenuOnFocus: true, ...props.options })
     useSelectResultsRef.current = res

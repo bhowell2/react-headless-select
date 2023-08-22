@@ -1,27 +1,32 @@
-import {
-  GroupSelectOption,
-  isGroupSelectOption,
-  OptionType,
-  SelectOption
-} from '../hooks/useSelect'
+import { ExtObj, GroupSelectOption, OptionType, SelectOption } from '../types/optionTypes'
+
+export function isGroupSelectOption<T, G = T, O extends ExtObj = ExtObj>(
+  option: OptionType<T, G, O>
+): option is GroupSelectOption<T, G, O> {
+  return 'groupLabel' in option
+}
 
 /**
  * Used to determine if two options are the same. This is used in some
  * reconciliation-type processes (e.g., finding last highlight index in
  * a new array of options).
  */
-export type OptionEqualityCheck<T, G = T> = (
-  a: OptionType<T, G>,
-  b: OptionType<T, G>
+export type OptionEqualityCheck<T, G = T, O extends ExtObj = ExtObj> = (
+  a: OptionType<T, G, O>,
+  b: OptionType<T, G, O>
 ) => boolean
 export const defaultOptionEqualityCheck: OptionEqualityCheck<any> = (a, b) =>
   a.value === b.value
 
 /** Passed the current input value and filters the available options as desired. */
-export type OptionsFilterFn<T, G = T> = (
+export type OptionsFilterFn<T, G = T, O extends ExtObj = ExtObj> = (
   val: string,
-  options: OptionType<T, G>[]
-) => OptionType<T, G>[]
+  options: OptionType<T, G, O>[]
+) => OptionType<T, G, O>[]
+
+type OptTypeOrSelectOptType<T, G = T, O extends ExtObj = ExtObj> =
+  | OptionType<T, G, O>
+  | SelectOption<T, O>
 
 /**
  * Basic matching function that uses indexOf to match the label or groupLabel.
@@ -29,14 +34,14 @@ export type OptionsFilterFn<T, G = T> = (
  * otherwise each group's options will be checked and if any match then the
  * GroupSelectOption will be returned with only the matching options.
  * */
-export function indexOfFilterMatch<T, O extends OptionType<T> | SelectOption<T>>(
+export function indexOfFilterMatch<T, G = T, Ext extends ExtObj = ExtObj>(
   val: string,
-  options: O[]
-): O[] {
+  options: OptTypeOrSelectOptType<T, G, Ext>[]
+): OptTypeOrSelectOptType<T, G, Ext>[] {
   if (val === '') {
     return options
   }
-  const result: O[] = []
+  const result: OptTypeOrSelectOptType<T, G, Ext>[] = []
   for (let i = 0; i < options.length; i++) {
     const option = options[i]
     if (isGroupSelectOption(option)) {
@@ -49,7 +54,7 @@ export function indexOfFilterMatch<T, O extends OptionType<T> | SelectOption<T>>
           result.push({
             groupLabel: option.groupLabel,
             options: groupFilteredOptions
-          } as O)
+          } as OptTypeOrSelectOptType<T, G, Ext>)
         }
       }
     } else if (option.label.indexOf(val) >= 0) {
@@ -110,22 +115,56 @@ export function getOptionsLength(
   return count
 }
 
+export function flattenOptions<T, G>(
+  options: OptionType<T, G>[],
+  canSelectGroup: boolean
+): OptionType<T, G>[] {
+  const res: OptionType<T, G>[] = []
+  // small optimization, if we did not encounter a group can just use
+  // the same options array.
+  let encounteredGroup = false
+  function flattenGroup(groupOption: GroupSelectOption<T, G>) {
+    encounteredGroup = true
+    const gOpts = groupOption.options
+    if (canSelectGroup) {
+      res.push(groupOption)
+    }
+    for (let i = 0; i < gOpts.length; i++) {
+      const opt = gOpts[i]
+      if (isGroupSelectOption(opt)) {
+        flattenGroup(opt)
+      } else {
+        res.push(opt)
+      }
+    }
+  }
+  for (let i = 0; i < options.length; i++) {
+    const opt = options[i]
+    if (isGroupSelectOption(opt)) {
+      flattenGroup(opt)
+    } else {
+      res.push(opt)
+    }
+  }
+  return encounteredGroup ? res : options
+}
+
 /**
  * Retrieves the option at the specified index - respecting grouping.
  * Usually this will return a SelectOption, but if GroupSelect is enabled then a
  * GroupSelectOption may be returned.
  */
-export function getOptionAtIndex<T, G = T>(
-  options: OptionType<T, G>[],
+export function getOptionAtIndex<T, G = T, O extends ExtObj = ExtObj>(
+  options: OptionType<T, G, O>[],
   index: number,
   canSelectGroup = false
-): OptionType<T, G> | null {
+): OptionType<T, G, O> | null {
   let pos = 0
   // easier to make inner function here to be used recursively to capture pos variable,
   // rather than having some weird return signature to update the current pos
   function handleGroupOptions(
-    groupOption: GroupSelectOption<T, G>
-  ): OptionType<T, G> | null {
+    groupOption: GroupSelectOption<T, G, O>
+  ): OptionType<T, G, O> | null {
     if (canSelectGroup) {
       if (pos === index) return groupOption
       pos++
@@ -199,10 +238,10 @@ export function getOptionIndex<T, G = T>(
   return -1
 }
 
-export type OptionSelectedCheck<T, G = T> = (
-  option: OptionType<T, G>,
-  selectedOptions: OptionType<T, G>[],
-  equalityCheck?: OptionEqualityCheck<T, G>
+export type OptionSelectedCheck<T, G = T, O extends ExtObj = ExtObj> = (
+  option: OptionType<T, G, O>,
+  selectedOptions: OptionType<T, G, O>[],
+  equalityCheck?: OptionEqualityCheck<T, G, O>
 ) => boolean
 
 export const defaultIsOptionSelectedCheck: OptionSelectedCheck<any> = (

@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.hashObject = void 0;
-// modeled after: https://gist.github.com/Trindaz/7f3cff734ca247609a7b
+// modeled after: https://gist.github.com/Trindaz/7f3cff734ca247609a7b (had an error)
 function hashObject(toHash) {
     const encountered = [];
     function check(obj) {
